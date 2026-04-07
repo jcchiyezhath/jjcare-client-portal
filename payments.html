@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Payments | JJ Care Client Portal</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <div class="site-header-top">
+        <h1>JJ Care Client Portal</h1>
+        <div class="site-header-actions">
+          <button type="button" class="mobile-menu-button" id="mobile-menu-button" aria-expanded="false" aria-controls="site-nav" aria-label="Open navigation menu">
+            <span></span>
+            <span></span>
+            <span></span>
+          </button>
+          <button type="button" id="logout-button" data-nav-protected hidden>Logout</button>
+        </div>
+      </div>
+      <nav class="site-nav" id="site-nav" aria-label="Main navigation">
+        <a href="index.html" data-nav-login hidden>Login</a>
+        <a href="dashboard.html" data-nav-protected hidden>Dashboard</a>
+        <a href="messages.html" data-nav-protected hidden>Messages</a>
+        <a href="updates.html" data-nav-protected hidden>Updates</a>
+        <a href="payments.html" class="active" data-nav-protected hidden>Payments</a>
+        <a href="profile.html" data-nav-protected hidden>Profile</a>
+        <a href="../index.html" data-nav-protected hidden>Main Website</a>
+        <button type="button" class="site-nav-logout" id="mobile-logout-button" data-nav-protected hidden>Logout</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="panel">
+      <div class="portal-heading portal-heading--compact">
+        <div>
+          <p class="portal-kicker" id="page-role-label">Portal View</p>
+          <h2 id="payments-title">Payments</h2>
+          <p id="payments-description">Review invoices, payment status, and upcoming billing details for each client.</p>
+        </div>
+      </div>
+
+      <div class="section-banner">
+        <p id="payments-banner-copy">Billing details are presented in a clear, low-stress layout so clients can quickly understand what is upcoming and what is complete.</p>
+      </div>
+
+      <div class="portal-grid portal-grid--two">
+        <article class="info-card">
+          <h3 id="payments-card-1-title">Open Items</h3>
+          <p id="payments-card-1-text">Check upcoming balances and confirm which visits have already been paid.</p>
+        </article>
+        <article class="info-card">
+          <h3 id="payments-card-2-title">Billing Overview</h3>
+          <p id="payments-card-2-text">This area is ready for future invoices, payment history, and billing details.</p>
+        </article>
+      </div>
+
+      <article class="empty-state-card">
+        <span class="empty-state-icon">Billing</span>
+        <h3 id="payments-empty-title">Invoices and payment history can live here</h3>
+        <p id="payments-empty-text">This section is ready for a cleaner payment timeline, receipt details, and future invoice tracking without clutter.</p>
+      </article>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>

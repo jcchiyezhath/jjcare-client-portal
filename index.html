@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JJ Care Client Portal</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <div class="site-header-top">
+        <h1>JJ Care Client Portal</h1>
+        <div class="site-header-actions">
+          <button type="button" class="mobile-menu-button" id="mobile-menu-button" aria-expanded="false" aria-controls="site-nav" aria-label="Open navigation menu">
+            <span></span>
+            <span></span>
+            <span></span>
+          </button>
+          <button type="button" id="logout-button" data-nav-protected hidden>Logout</button>
+        </div>
+      </div>
+      <nav class="site-nav" id="site-nav" aria-label="Main navigation">
+        <a href="index.html" class="active" data-nav-login>Login</a>
+        <a href="dashboard.html" data-nav-protected hidden>Dashboard</a>
+        <a href="messages.html" data-nav-protected hidden>Messages</a>
+        <a href="updates.html" data-nav-protected hidden>Updates</a>
+        <a href="payments.html" data-nav-protected hidden>Payments</a>
+        <a href="profile.html" data-nav-protected hidden>Profile</a>
+        <a href="../index.html" data-nav-protected hidden>Main Website</a>
+        <button type="button" class="site-nav-logout" id="mobile-logout-button" data-nav-protected hidden>Logout</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container auth-shell">
+    <section class="auth-card">
+      <div class="auth-intro">
+        <p class="portal-kicker">JJ Care Client Portal</p>
+        <h2>Client Portal</h2>
+        <p>Secure portal access for JJ Care admins and existing clients, with role-based views after sign-in.</p>
+      </div>
+
+      <div class="auth-stack" id="auth-options">
+        <button type="button" class="auth-provider-button auth-provider-button--primary" id="googleSignInButton">
+          <span class="auth-provider-mark">G</span>
+          <span>Continue with Google</span>
+        </button>
+      </div>
+
+      <section class="auth-browser-warning" id="in-app-browser-warning" hidden aria-live="polite">
+        <strong>Having trouble signing in?</strong>
+        <p>If this page opened inside WhatsApp, Facebook, or Instagram, try opening it in Safari or Chrome and sign in there.</p>
+      </section>
+
+      <p class="error-message auth-status" id="auth-status" aria-live="polite"></p>
+
+      <p class="auth-footnote" id="auth-footnote">
+        Admins and clients sign in from the same page, then the portal opens the right experience automatically.
+      </p>
+    </section>
+  </main>
+
+  <script type="module" src="script.js"></script>
+</body>
+</html>

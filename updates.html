@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Updates | JJ Care Client Portal</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <div class="site-header-top">
+        <h1>JJ Care Client Portal</h1>
+        <div class="site-header-actions">
+          <button type="button" class="mobile-menu-button" id="mobile-menu-button" aria-expanded="false" aria-controls="site-nav" aria-label="Open navigation menu">
+            <span></span>
+            <span></span>
+            <span></span>
+          </button>
+          <button type="button" id="logout-button" data-nav-protected hidden>Logout</button>
+        </div>
+      </div>
+      <nav class="site-nav" id="site-nav" aria-label="Main navigation">
+        <a href="index.html" data-nav-login hidden>Login</a>
+        <a href="dashboard.html" data-nav-protected hidden>Dashboard</a>
+        <a href="messages.html" data-nav-protected hidden>Messages</a>
+        <a href="updates.html" class="active" data-nav-protected hidden>Updates</a>
+        <a href="payments.html" data-nav-protected hidden>Payments</a>
+        <a href="profile.html" data-nav-protected hidden>Profile</a>
+        <a href="../index.html" data-nav-protected hidden>Main Website</a>
+        <button type="button" class="site-nav-logout" id="mobile-logout-button" data-nav-protected hidden>Logout</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="panel">
+      <div class="portal-heading portal-heading--compact">
+        <div>
+          <p class="portal-kicker" id="page-role-label">Portal View</p>
+          <h2 id="updates-title">Updates</h2>
+          <p id="updates-description">Track visit recaps, care notes, and recent pet service updates in one place.</p>
+        </div>
+      </div>
+
+      <div class="section-banner">
+        <p id="updates-banner-copy">Visit summaries and shared care notes will live here, keeping each update easy to review and reassuring to read.</p>
+      </div>
+
+      <div class="portal-grid portal-grid--two">
+        <article class="info-card">
+          <h3 id="updates-card-1-title">Latest Update</h3>
+          <p id="updates-card-1-text">The latest visit update and shared media will appear here.</p>
+        </article>
+        <article class="info-card">
+          <h3 id="updates-card-2-title">Care Notes</h3>
+          <p id="updates-card-2-text">Use this section to keep feeding reminders, routines, and visit summaries organized.</p>
+        </article>
+      </div>
+
+      <article class="empty-state-card">
+        <span class="empty-state-icon">Update</span>
+        <h3 id="updates-empty-title">More care updates will appear here</h3>
+        <p id="updates-empty-text">As new visits are completed, this page can become the running timeline for notes, photos, and service highlights.</p>
+      </article>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>

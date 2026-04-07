@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Profile | JJ Care Client Portal</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <div class="site-header-top">
+        <h1>JJ Care Client Portal</h1>
+        <div class="site-header-actions">
+          <button type="button" class="mobile-menu-button" id="mobile-menu-button" aria-expanded="false" aria-controls="site-nav" aria-label="Open navigation menu">
+            <span></span>
+            <span></span>
+            <span></span>
+          </button>
+          <button type="button" id="logout-button" data-nav-protected hidden>Logout</button>
+        </div>
+      </div>
+      <nav class="site-nav" id="site-nav" aria-label="Main navigation">
+        <a href="index.html" data-nav-login hidden>Login</a>
+        <a href="dashboard.html" data-nav-protected hidden>Dashboard</a>
+        <a href="messages.html" data-nav-protected hidden>Messages</a>
+        <a href="updates.html" data-nav-protected hidden>Updates</a>
+        <a href="payments.html" data-nav-protected hidden>Payments</a>
+        <a href="profile.html" class="active" data-nav-protected hidden>Profile</a>
+        <a href="../index.html" data-nav-protected hidden>Main Website</a>
+        <button type="button" class="site-nav-logout" id="mobile-logout-button" data-nav-protected hidden>Logout</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="panel">
+      <div class="portal-heading portal-heading--compact">
+        <div>
+          <p class="portal-kicker" id="page-role-label">Portal View</p>
+          <h2 id="profile-title">Profile</h2>
+          <p id="profile-description">Keep client details, pet preferences, and household notes ready for each visit.</p>
+        </div>
+      </div>
+
+      <div class="section-banner">
+        <p id="profile-banner-copy">Profile details can stay thoughtful and organized, making routines, home notes, and preferences easy to reference.</p>
+      </div>
+
+      <div class="portal-grid portal-grid--two">
+        <article class="info-card">
+          <h3 id="profile-card-1-title">Client Name</h3>
+          <p id="profile-card-1-text">Client name will appear here.</p>
+        </article>
+        <article class="info-card">
+          <h3 id="profile-card-2-title">Pet Names</h3>
+          <p id="profile-card-2-text">Pet names will appear here.</p>
+        </article>
+        <article class="info-card">
+          <h3 id="profile-card-3-title">Care Notes</h3>
+          <p id="profile-card-3-text">Care notes will appear here.</p>
+        </article>
+        <article class="info-card">
+          <h3 id="profile-card-4-title">Routine Notes</h3>
+          <p id="profile-card-4-text">Routine notes will appear here.</p>
+        </article>
+        <article class="info-card">
+          <h3 id="profile-card-5-title">Household Notes</h3>
+          <p id="profile-card-5-text">Household notes will appear here.</p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
