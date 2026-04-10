@@ -3,7 +3,7 @@ const unreadStorageKey = "jjcareUnreadCounts";
 const adminDraftStorageKey = "jjcareAdminClientDrafts";
 const adminClientFilterStorageKey = "jjcareAdminClientFilter";
 const localClientsStorageKey = "jjcareLocalClients";
-const addClientWebhookUrl = "https://script.google.com/macros/s/AKfycbzdJ2zRCiCn4URXVizGSFkzAxaG4mJqX9IRLW6OZoiOhN2Sv-f3J01zehqXKirxAyetdg/exec";
+const addClientWebhookUrl = "https://script.google.com/macros/s/AKfycbyDCSF-zhdPnSkGnUp69nL9Rt1z4ktKjTWAtF_85F4t7IMZgznLUyBXtNOkMe-M4OoUhw/exec";
 const portalUsersCsvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRK0bSuRbXqHmDC48CQgXQ5vIQlneRJP_bETBwS_mesUrms5M4eZMQff7-hjEqRh6A75Hs-xxwjfqLd/pub?output=csv";
 const protectedPages = [
   "dashboard.html",
@@ -96,6 +96,82 @@ const parsePets = (value) => {
     .filter(Boolean);
 };
 
+const getSequentialClientIdNumber = (value) => {
+  const normalizedValue = normalizeClientId(value);
+  const match = normalizedValue.match(/^CL-(\d+)$/i);
+
+  if (!match) {
+    return null;
+  }
+
+  const parsedValue = Number.parseInt(match[1], 10);
+  return Number.isFinite(parsedValue) ? parsedValue : null;
+};
+
+const getLoadedClientRecordsForIdGeneration = () => {
+  const portalUsers = portalUsersState.users ? Object.values(portalUsersState.users) : [];
+  const localClients = getLocalClients();
+
+  return [...portalUsers, ...localClients]
+    .map((record) => normalizeLocalClientRecord(record))
+    .filter((record) => record.role === "client");
+};
+
+const generateClientId = () => {
+  const existingClientIds = getLoadedClientRecordsForIdGeneration()
+    .map((record) => normalizeClientId(record.clientId))
+    .filter(Boolean);
+  const existingClientNumbers = existingClientIds
+    .map((clientId) => getSequentialClientIdNumber(clientId))
+    .filter((value) => value != null);
+  const highestClientNumber = existingClientNumbers.length > 0
+    ? Math.max(...existingClientNumbers)
+    : 1000;
+  const nextClientNumber = highestClientNumber + 1;
+  const nextClientId = `CL-${nextClientNumber}`;
+
+  console.log("Existing clientIds:", existingClientIds);
+  console.log("Next clientId chosen:", nextClientId);
+  console.log("Generated clientId:", nextClientId);
+
+  return nextClientId;
+};
+
+const normalizeClientId = (value) => {
+  return String(value || "").trim();
+};
+
+const normalizeClientName = (value) => {
+  return String(value || "").trim().toLowerCase();
+};
+
+const getClientStorageKey = (clientRecord = {}) => {
+  return normalizeClientId(clientRecord.clientId)
+    || String(clientRecord.email || "").trim().toLowerCase()
+    || String(clientRecord.name || "").trim();
+};
+
+const isSameClientRecord = (leftRecord = {}, rightRecord = {}) => {
+  const leftClientId = normalizeClientId(leftRecord.clientId);
+  const rightClientId = normalizeClientId(rightRecord.clientId);
+
+  if (leftClientId && rightClientId) {
+    return leftClientId === rightClientId;
+  }
+
+  const leftEmail = String(leftRecord.email || "").trim().toLowerCase();
+  const rightEmail = String(rightRecord.email || "").trim().toLowerCase();
+
+  if (leftEmail && rightEmail) {
+    return leftEmail === rightEmail;
+  }
+
+  const leftName = String(leftRecord.name || "").trim();
+  const rightName = String(rightRecord.name || "").trim();
+
+  return Boolean(leftName && rightName && leftName === rightName);
+};
+
 const normalizeClientStage = (value) => {
   const normalized = String(value || "").trim().toLowerCase();
 
@@ -114,6 +190,38 @@ const formatClientStage = (value) => {
   }
 
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+};
+
+const resolveClientStage = (clientRecord) => {
+  const rawClientStage = String(clientRecord?.profile?.clientStage || clientRecord?.clientStage || "").trim().toLowerCase();
+  const rawStatus = String(clientRecord?.status || "").trim().toLowerCase();
+  const rawPortalStatus = String(clientRecord?.profile?.portalStatus || clientRecord?.portalStatus || "").trim().toLowerCase();
+
+  if (["inactive", "archived"].includes(rawStatus) || ["inactive", "archived"].includes(rawPortalStatus)) {
+    return "archived";
+  }
+
+  if (rawStatus && rawStatus !== "active" && (!rawClientStage || rawClientStage === "active")) {
+    return normalizeClientStage(rawStatus);
+  }
+
+  if (rawClientStage) {
+    return normalizeClientStage(rawClientStage);
+  }
+
+  if (rawStatus) {
+    return normalizeClientStage(rawStatus);
+  }
+
+  if (rawPortalStatus === "pending") {
+    return "upcoming";
+  }
+
+  if (rawPortalStatus === "paused") {
+    return "not responding";
+  }
+
+  return "active";
 };
 
 const getLocalClients = () => {
@@ -139,10 +247,10 @@ const addClientRequiredFieldNames = [
 
 const upsertLocalClient = (clientRecord) => {
   const clients = getLocalClients();
-  const normalizedEmail = String(clientRecord.email || "").trim().toLowerCase();
-  const nextClients = clients.filter((client) => String(client.email || "").trim().toLowerCase() !== normalizedEmail);
+  const normalizedClient = normalizeLocalClientRecord(clientRecord);
+  const nextClients = clients.filter((client) => !isSameClientRecord(client, normalizedClient));
 
-  nextClients.push(clientRecord);
+  nextClients.push(normalizedClient);
   saveLocalClients(nextClients);
 };
 
@@ -284,41 +392,83 @@ const submitPortalClientFormPost = (payload) => {
   form.submit();
 };
 
+const clientSheetFieldOrder = [
+  "clientId",
+  "email",
+  "name",
+  "pets",
+  "role",
+  "clientStage",
+  "portalStatus",
+  "phone",
+  "area",
+  "emergencyContact",
+  "feedingRoutine",
+  "medicationSummary",
+  "pottyOrWalkRoutine",
+  "behaviorNotes",
+  "householdNotes",
+  "startDate",
+  "endDate",
+  "nightlyRate",
+  "totalAmount",
+  "serviceType"
+];
+
 const buildClientSheetFormPayload = (clientRecord) => {
   const normalizedClient = normalizeLocalClientRecord(clientRecord);
 
   return {
+    clientId: normalizedClient.clientId,
     email: normalizedClient.email,
     name: normalizedClient.name,
     pets: normalizedClient.pets.join(", "),
     role: normalizedClient.role,
-    status: normalizedClient.status,
     clientStage: normalizedClient.clientStage,
+    portalStatus: String(clientRecord.portalStatus || "").trim(),
     phone: String(clientRecord.phone || "").trim(),
     area: String(clientRecord.area || "").trim(),
     emergencyContact: String(clientRecord.emergencyContact || "").trim(),
     feedingRoutine: String(clientRecord.feedingRoutine || "").trim(),
     medicationSummary: String(clientRecord.medicationSummary || "").trim(),
+    pottyOrWalkRoutine: String(clientRecord.pottyWalkRoutine || "").trim(),
+    behaviorNotes: String(clientRecord.behaviorNotes || "").trim(),
     householdNotes: String(clientRecord.householdNotes || "").trim(),
-    portalStatus: String(clientRecord.portalStatus || "").trim()
+    startDate: String(clientRecord.startDate || "").trim(),
+    endDate: String(clientRecord.endDate || "").trim(),
+    nightlyRate: String(clientRecord.nightlyRate || "").trim(),
+    totalAmount: String(clientRecord.totalAmount || "").trim(),
+    serviceType: String(clientRecord.serviceType || "").trim()
   };
 };
 
+const getOrderedClientSheetValues = (payload) => {
+  return clientSheetFieldOrder.map((fieldName) => String(payload[fieldName] || "").trim());
+};
+
 const submitAddClientFormPost = (payload) => {
-  submitPortalClientFormPost(payload);
+  const addPayload = {
+    action: "add",
+    ...payload
+  };
+
+  submitPortalClientFormPost(addPayload);
 
   console.log("Add client form submit started");
   console.log("Add client webhook URL:", addClientWebhookUrl);
-  console.log("Add client submitted field values:", payload);
+  console.log("Final add payload:", addPayload);
+  console.log("Ordered values array being sent/saved:", getOrderedClientSheetValues(addPayload));
+  console.log("Add success result:", "submitted");
 };
 
-const submitClientUpdateFormPost = ({ selectedClientName, originalEmail, originalName, payload }) => {
-  const matchBy = originalEmail ? "email" : "name";
+const submitClientUpdateFormPost = ({ selectedClientName, originalEmail, originalName, originalClientId, payload }) => {
+  const resolvedClientId = normalizeClientId(payload.clientId || originalClientId);
   const updatePayload = {
     action: "update",
-    matchBy,
+    clientId: resolvedClientId,
     originalEmail: originalEmail || "",
     originalName: originalName || "",
+    originalClientId: normalizeClientId(originalClientId),
     ...payload
   };
 
@@ -329,7 +479,8 @@ const submitClientUpdateFormPost = ({ selectedClientName, originalEmail, origina
   });
   console.log("Edit payload:", Object.fromEntries(formData.entries()));
   console.log("Selected client being edited:", selectedClientName || originalName || payload.name || "");
-  console.log("Client update match key used:", matchBy);
+  console.log("Selected clientId:", resolvedClientId || "(missing)");
+  console.log("Full edit payload:", updatePayload);
   console.log("Client update payload sent:", updatePayload);
   console.log("Client update webhook URL:", addClientWebhookUrl);
 
@@ -338,7 +489,7 @@ const submitClientUpdateFormPost = ({ selectedClientName, originalEmail, origina
   console.log("Client update form submission started");
   console.log("Client update success result:", "submitted");
 
-  return { matchBy, updatePayload };
+  return { updatePayload };
 };
 
 const getAdminDrafts = () => {
@@ -382,6 +533,34 @@ const removeLocalClientByEmail = (email) => {
   }
 
   const nextClients = getLocalClients().filter((client) => String(client.email || "").trim().toLowerCase() !== normalizedEmail);
+  saveLocalClients(nextClients);
+};
+
+const removeLocalClientByIdentity = ({ clientId = "", email = "", name = "" } = {}) => {
+  const normalizedClientId = normalizeClientId(clientId);
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  const normalizedName = String(name || "").trim();
+
+  const nextClients = getLocalClients().filter((client) => {
+    const clientClientId = normalizeClientId(client.clientId);
+    const clientEmail = String(client.email || "").trim().toLowerCase();
+    const clientName = String(client.name || "").trim();
+
+    if (normalizedClientId && clientClientId) {
+      return clientClientId !== normalizedClientId;
+    }
+
+    if (normalizedEmail && clientEmail) {
+      return clientEmail !== normalizedEmail;
+    }
+
+    if (normalizedName && clientName) {
+      return clientName !== normalizedName;
+    }
+
+    return true;
+  });
+
   saveLocalClients(nextClients);
 };
 
@@ -462,59 +641,216 @@ const parseCsv = (csvText) => {
 };
 
 const normalizePortalUserRow = (row) => {
+  const clientId = normalizeClientId(row.clientId || row.ClientId || row["Client ID"] || "");
   const email = String(row.Email || "").trim().toLowerCase();
   const name = String(row.Name || "").trim();
   const pets = parsePets(row.Pets || "");
   const role = String(row.Role || "").trim().toLowerCase();
-  const status = String(row.Status || "").trim().toLowerCase();
-  const clientStage = normalizeClientStage(row.ClientStage || row["Client Stage"] || status);
+  const status = String(row.Status || row.PortalStatus || row["Portal Status"] || "active").trim().toLowerCase();
+  const portalStatus = String(row.PortalStatus || row["Portal Status"] || "").trim();
+  const clientStage = resolveClientStage({
+    status,
+    clientStage: row.ClientStage || row["Client Stage"] || "",
+    portalStatus
+  });
 
   return {
+    clientId,
     email,
     name,
     pets,
     role,
     status,
     clientStage,
+    portalStatus,
     currentClient: role === "client" ? name : ""
   };
 };
 
 const normalizeLocalClientRecord = (record) => {
+  const clientId = normalizeClientId(record.clientId);
   const email = String(record.email || "").trim().toLowerCase();
   const name = String(record.name || "").trim();
   const pets = Array.isArray(record.pets) ? record.pets.filter(Boolean) : parsePets(record.pets || "");
   const role = String(record.role || "client").trim().toLowerCase() || "client";
   const status = String(record.status || "active").trim().toLowerCase() || "active";
-  const clientStage = normalizeClientStage(record.clientStage || "active");
+  const portalStatus = String(record.portalStatus || "").trim();
+  const clientStage = resolveClientStage({
+    status,
+    clientStage: record.clientStage || "",
+    portalStatus
+  });
 
   return {
     ...record,
+    clientId,
     email,
     name,
     pets,
     role,
     status,
     clientStage,
+    portalStatus,
     currentClient: role === "client" ? name : ""
+  };
+};
+
+const findMatchingClientRecord = (clientRecords, candidateRecord) => {
+  const normalizedCandidate = normalizeLocalClientRecord(candidateRecord);
+  const candidateClientId = normalizeClientId(normalizedCandidate.clientId);
+  const candidateEmail = String(normalizedCandidate.email || "").trim().toLowerCase();
+  const candidateName = normalizeClientName(normalizedCandidate.name);
+
+  if (candidateClientId) {
+    const matchedByClientId = clientRecords.find((record) => normalizeClientId(record.clientId) === candidateClientId);
+
+    if (matchedByClientId) {
+      return matchedByClientId;
+    }
+  }
+
+  if (candidateEmail) {
+    const matchedByEmail = clientRecords.find((record) => String(record.email || "").trim().toLowerCase() === candidateEmail);
+
+    if (matchedByEmail) {
+      return matchedByEmail;
+    }
+  }
+
+  if (candidateName) {
+    return clientRecords.find((record) => normalizeClientName(record.name) === candidateName) || null;
+  }
+
+  return null;
+};
+
+const dedupeClientRecords = (clientRecords) => {
+  const seenClientIds = new Set();
+  const seenEmails = new Set();
+  const seenNames = new Set();
+  const deduplicatedClients = [];
+
+  clientRecords.forEach((client) => {
+    const normalizedClient = normalizeLocalClientRecord(client);
+    const clientId = normalizeClientId(normalizedClient.clientId);
+    const email = String(normalizedClient.email || "").trim().toLowerCase();
+    const name = normalizeClientName(normalizedClient.name);
+
+    if (clientId && seenClientIds.has(clientId)) {
+      return;
+    }
+
+    if (!clientId && email && seenEmails.has(email)) {
+      return;
+    }
+
+    if (!clientId && !email && name && seenNames.has(name)) {
+      return;
+    }
+
+    if (clientId) {
+      seenClientIds.add(clientId);
+    }
+
+    if (email) {
+      seenEmails.add(email);
+    }
+
+    if (name) {
+      seenNames.add(name);
+    }
+
+    deduplicatedClients.push(normalizedClient);
+  });
+
+  return deduplicatedClients;
+};
+
+const cleanupStaleLocalClientData = (portalUsers, localClients) => {
+  const sheetClientRecords = dedupeClientRecords(getClientRecords(portalUsers));
+  const normalizedLocalClients = localClients.map((client) => normalizeLocalClientRecord(client));
+  const validLocalClients = [];
+  const staleLocalClients = [];
+
+  normalizedLocalClients.forEach((client) => {
+    if (findMatchingClientRecord(sheetClientRecords, client)) {
+      validLocalClients.push(client);
+      return;
+    }
+
+    staleLocalClients.push(client);
+  });
+
+  if (staleLocalClients.length > 0) {
+    saveLocalClients(validLocalClients);
+  }
+
+  const existingDrafts = getAdminDrafts();
+  const nextDrafts = {};
+  const staleDraftKeys = [];
+
+  Object.entries(existingDrafts).forEach(([draftKey, draftValue]) => {
+    const draftRecord = normalizeLocalClientRecord({
+      clientId: draftValue?.clientId || draftValue?.profile?.clientId || draftKey,
+      email: draftValue?.profile?.email || draftKey,
+      name: draftValue?.clientName || draftValue?.profile?.clientName || draftKey
+    });
+
+    const matchingSheetClient = findMatchingClientRecord(sheetClientRecords, draftRecord);
+
+    if (!matchingSheetClient) {
+      staleDraftKeys.push(draftKey);
+      return;
+    }
+
+    nextDrafts[getClientStorageKey(matchingSheetClient)] = draftValue;
+  });
+
+  if (staleDraftKeys.length > 0 || Object.keys(nextDrafts).length !== Object.keys(existingDrafts).length) {
+    localStorage.setItem(adminDraftStorageKey, JSON.stringify(nextDrafts));
+  }
+
+  return {
+    sheetClientRecords,
+    validLocalClients,
+    staleLocalClients,
+    staleDraftKeys
   };
 };
 
 const mergePortalUsersWithLocalClients = (portalUsers, localClients) => {
   const mergedUsers = { ...portalUsers };
+  const sheetClientRecords = dedupeClientRecords(getClientRecords(portalUsers));
+  const staleLocalClients = [];
 
   localClients.forEach((client) => {
     const normalizedClient = normalizeLocalClientRecord(client);
 
-    if (!normalizedClient.email) {
+    if (!normalizedClient.email && !normalizedClient.clientId) {
       return;
     }
 
-    mergedUsers[normalizedClient.email] = {
-      ...(mergedUsers[normalizedClient.email] || {}),
+    const matchingSheetClient = findMatchingClientRecord(sheetClientRecords, normalizedClient);
+
+    if (!matchingSheetClient) {
+      staleLocalClients.push(normalizedClient);
+      return;
+    }
+
+    const targetKey = Object.keys(mergedUsers).find((key) => isSameClientRecord(mergedUsers[key], matchingSheetClient));
+
+    if (!targetKey) {
+      staleLocalClients.push(normalizedClient);
+      return;
+    }
+
+    mergedUsers[targetKey] = {
+      ...mergedUsers[targetKey],
       ...normalizedClient
     };
   });
+
+  console.log("Stale local clients removed/ignored:", staleLocalClients);
 
   return mergedUsers;
 };
@@ -549,8 +885,8 @@ const fetchPortalUsers = async () => {
 
       const normalizedUser = normalizePortalUserRow(row);
 
-      if (normalizedUser.email) {
-        users[normalizedUser.email] = normalizedUser;
+      if (normalizedUser.email || normalizedUser.clientId) {
+        users[normalizedUser.email || normalizedUser.clientId] = normalizedUser;
       }
     });
 
@@ -592,11 +928,7 @@ const filterClientRecords = (clientRecords, filterValue) => {
     return clientRecords;
   }
 
-  if (normalizedFilter === "active") {
-    return clientRecords.filter((client) => ["active", "upcoming"].includes(normalizeClientStage(client.clientStage)));
-  }
-
-  return clientRecords.filter((client) => normalizeClientStage(client.clientStage) === normalizedFilter);
+  return clientRecords.filter((client) => resolveClientStage(client) === normalizedFilter);
 };
 
 const getClientRecordByName = (portalUsers, clientName) => {
@@ -605,8 +937,10 @@ const getClientRecordByName = (portalUsers, clientName) => {
   ) || null;
 };
 
-const resolveSelectedClientName = (portalUsers, selectedClientName) => {
-  const clientList = getClientList(portalUsers);
+const resolveSelectedClientName = (clientSource, selectedClientName) => {
+  const clientList = Array.isArray(clientSource)
+    ? clientSource.map((client) => client?.name).filter(Boolean)
+    : getClientList(clientSource);
 
   if (clientList.length === 0) {
     return "";
@@ -621,6 +955,29 @@ const noPaymentText = "No payment record has been added yet.";
 const noCareText = "No care routine has been entered yet.";
 const noProfileText = "No client profile details have been saved yet.";
 const noBookingText = "No stay details have been entered yet.";
+
+const getNoClientsFoundMessage = (filterValue) => {
+  const normalizedFilter = String(filterValue || "all").trim().toLowerCase();
+
+  if (normalizedFilter === "all") {
+    return "No clients found";
+  }
+
+  return `No ${normalizedFilter} clients found`;
+};
+
+const getClientNormalizationSnapshot = (clientRecord) => {
+  return {
+    name: String(clientRecord?.name || "").trim(),
+    rawClientStage: String(clientRecord?.profile?.clientStage || clientRecord?.clientStage || "").trim(),
+    rawStatus: String(clientRecord?.status || "").trim(),
+    rawPortalStatus: String(clientRecord?.profile?.portalStatus || clientRecord?.portalStatus || "").trim(),
+    normalizedClientStage: String(clientRecord?.profile?.clientStage || clientRecord?.clientStage || "").trim().toLowerCase(),
+    normalizedStatus: String(clientRecord?.status || "").trim().toLowerCase(),
+    normalizedPortalStatus: String(clientRecord?.profile?.portalStatus || clientRecord?.portalStatus || "").trim().toLowerCase(),
+    resolvedStage: resolveClientStage(clientRecord)
+  };
+};
 
 const getNightCount = (startDate, endDate) => {
   if (!startDate || !endDate) {
@@ -677,6 +1034,7 @@ const formatStatus = (status) => {
 };
 
 const buildClientSheetData = (clientRecord) => {
+  const clientId = normalizeClientId(clientRecord?.clientId);
   const clientName = clientRecord?.name || noDataText;
   const petNames = Array.isArray(clientRecord?.pets) && clientRecord.pets.length > 0
     ? clientRecord.pets
@@ -689,9 +1047,10 @@ const buildClientSheetData = (clientRecord) => {
   const serviceType = String(clientRecord?.serviceType || "").trim() || noDataText;
 
   return {
+    clientId,
     clientName,
     petNames,
-    clientStage: normalizeClientStage(clientRecord?.clientStage),
+    clientStage: resolveClientStage(clientRecord),
     portalStatus,
     paymentStatus: noDataText,
     latestUpdate: {
@@ -722,6 +1081,7 @@ const buildClientSheetData = (clientRecord) => {
       serviceType
     },
     profile: {
+      clientId,
       email: clientRecord?.email || noDataText,
       clientName,
       petNames: petNames.join(", "),
@@ -734,7 +1094,7 @@ const buildClientSheetData = (clientRecord) => {
       behaviorNotes: noDataText,
       householdNotes: noDataText,
       portalStatus,
-      clientStage: normalizeClientStage(clientRecord?.clientStage)
+      clientStage: resolveClientStage(clientRecord)
     },
     checklist: Array.from({ length: 6 }, () => noDataText)
   };
@@ -752,6 +1112,7 @@ const mergeClientSheetData = (baseData, overrideData = {}) => {
   return {
     ...baseData,
     ...overrideData,
+    clientId: normalizeClientId(overrideData.clientId || overrideData.profile?.clientId || baseData.clientId || baseData.profile?.clientId),
     petNames: mergedPets,
     latestUpdate: {
       ...baseData.latestUpdate,
@@ -771,6 +1132,7 @@ const mergeClientSheetData = (baseData, overrideData = {}) => {
     },
     profile: {
       ...mergedProfile,
+      clientId: normalizeClientId(mergedProfile.clientId || overrideData.clientId || baseData.clientId),
       clientName: mergedProfile.clientName || baseData.clientName,
       petNames: mergedProfile.petNames || mergedPets.join(", "),
       portalStatus: mergedProfile.portalStatus || baseData.portalStatus,
@@ -785,6 +1147,7 @@ const mergeClientSheetData = (baseData, overrideData = {}) => {
 
 const buildLocalClientRecordFromData = (clientData, clientKey, fallbackRecord = {}) => {
   return normalizeLocalClientRecord({
+    clientId: clientData.clientId || clientData.profile.clientId || fallbackRecord.clientId || "",
     email: clientData.profile.email === noDataText ? clientKey : clientData.profile.email,
     name: clientData.clientName,
     pets: clientData.petNames,
@@ -1050,9 +1413,18 @@ document.addEventListener("DOMContentLoaded", async () => {
   let adminClients = [];
 
   try {
+    const rawLocalCachedClients = getLocalClients();
+
     portalUsers = await fetchPortalUsers();
-    portalUsers = mergePortalUsersWithLocalClients(portalUsers, getLocalClients());
-    adminClients = getClientList(portalUsers);
+
+    const cleanupResult = cleanupStaleLocalClientData(portalUsers, rawLocalCachedClients);
+    portalUsers = mergePortalUsersWithLocalClients(portalUsers, cleanupResult.validLocalClients);
+    adminClients = dedupeClientRecords(getClientRecords(portalUsers)).map((client) => client.name);
+
+    console.log("Raw sheet clients:", cleanupResult.sheetClientRecords);
+    console.log("Raw local cached clients:", rawLocalCachedClients);
+    console.log("Stale local clients removed/ignored:", cleanupResult.staleLocalClients);
+    console.log("Stale local drafts removed/ignored:", cleanupResult.staleDraftKeys);
   } catch (error) {
     console.error("Portal user list error:", error);
     portalUsers = {};
@@ -1075,30 +1447,44 @@ document.addEventListener("DOMContentLoaded", async () => {
   const adminFilter = isAdminView
     ? String(localStorage.getItem(adminClientFilterStorageKey) || "active").trim().toLowerCase()
     : "active";
-  const allClientRecords = getClientRecords(portalUsers);
+  const allClientRecords = dedupeClientRecords(getClientRecords(portalUsers));
   const filteredClientRecords = filterClientRecords(allClientRecords, adminFilter);
+  const noClientsFoundMessage = getNoClientsFoundMessage(adminFilter);
+  const normalizedClientSnapshots = allClientRecords.map((client) => getClientNormalizationSnapshot(client));
 
   adminClients = filteredClientRecords.map((client) => client.name);
 
-  const defaultAdminClient = adminClients[0] || allClientRecords[0]?.name || "";
+  const defaultAdminClient = adminClients[0] || "";
   const rawSelectedAdminClient = localStorage.getItem("jjcareSelectedClient") || "";
   const dashboardSelectedClient = isAdminView
-    ? resolveSelectedClientName(portalUsers, rawSelectedAdminClient || defaultAdminClient)
+    ? resolveSelectedClientName(filteredClientRecords, rawSelectedAdminClient || defaultAdminClient)
     : loggedInClientRecord?.name || "";
 
-  if (isAdminView && dashboardSelectedClient && dashboardSelectedClient !== rawSelectedAdminClient) {
-    localStorage.setItem("jjcareSelectedClient", dashboardSelectedClient);
+  if (isAdminView) {
+    if (dashboardSelectedClient && dashboardSelectedClient !== rawSelectedAdminClient) {
+      localStorage.setItem("jjcareSelectedClient", dashboardSelectedClient);
+    }
+
+    if (!dashboardSelectedClient && rawSelectedAdminClient) {
+      localStorage.removeItem("jjcareSelectedClient");
+    }
   }
 
-  const selectedClientRecord = getClientRecordByName(portalUsers, dashboardSelectedClient);
+  const selectedClientRecord = allClientRecords.find((client) => client.name === dashboardSelectedClient) || null;
   const activeClientRecord = isAdminView ? selectedClientRecord : loggedInClientRecord;
-  const activeClientKey = activeClientRecord?.email || activeClientRecord?.name || "";
+  const activeClientKey = getClientStorageKey(activeClientRecord || {});
   let activeClientData = mergeClientSheetData(
     buildClientSheetData(activeClientRecord),
     getAdminClientDraft(activeClientKey) || {}
   );
   const clients = allClientRecords;
 
+  console.log("Deduplicated final client list:", allClientRecords);
+  console.log("Normalized stage/status values per client:", normalizedClientSnapshots);
+  console.log("Current filter:", adminFilter);
+  console.log("Filtered client names:", adminClients);
+  console.log("Final dropdown client options:", adminClients.length > 0 ? adminClients : [noClientsFoundMessage]);
+  console.log("Final selected client after filter is applied:", dashboardSelectedClient || null);
   console.log("Selected client:", activeClientRecord || null);
   console.log("Clients data:", clients);
 
@@ -1236,6 +1622,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         ? sourceProfile.petNames
         : (Array.isArray(activeClientData?.petNames) ? activeClientData.petNames.join(", ") : activeClientRecord?.pets?.join(", ") || ""))
       : "";
+    const sourceClientId = isEditMode
+      ? normalizeClientId(activeClientRecord?.clientId || activeClientData?.clientId || sourceProfile.clientId || "")
+      : "";
     const sourceEmail = isEditMode
       ? String(
         sourceProfile.email && sourceProfile.email !== noDataText
@@ -1353,6 +1742,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     modal.querySelector("#admin-add-client-save")?.addEventListener("click", async () => {
       const isEditing = modal.dataset.mode === "edit";
+      const existingClientId = normalizeClientId(activeClientRecord?.clientId || activeClientData?.clientId || activeClientData?.profile?.clientId || "");
+      const clientId = isEditing ? (sourceClientId || existingClientId) : generateClientId();
       const previousEmail = String(activeClientRecord?.email || activeClientKey || "").trim().toLowerCase();
       const previousName = String(activeClientData?.clientName || activeClientRecord?.name || "").trim();
       const startDate = modal.querySelector('[name="addClientStartDate"]')?.value || "";
@@ -1388,6 +1779,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
 
       const localClientRecord = normalizeLocalClientRecord({
+        clientId,
         email,
         name,
         pets,
@@ -1436,11 +1828,14 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
 
         if (isEditing) {
+          console.log("Selected clientId:", clientId || "(missing)");
+          console.log("Full edit payload:", payload);
           submitClientUpdateFormPost({
             selectedClientName: previousName || localClientRecord.name,
             originalEmail: previousEmail,
             originalName: previousName,
-            payload: buildClientSheetFormPayload(localClientRecord)
+            originalClientId: existingClientId,
+            payload
           });
         } else {
           submitAddClientFormPost(payload);
@@ -1457,13 +1852,21 @@ document.addEventListener("DOMContentLoaded", async () => {
         return;
       }
 
-      if (modal.dataset.mode === "edit" && previousEmail && previousEmail !== localClientRecord.email) {
-        removeLocalClientByEmail(previousEmail);
-        deleteAdminClientDraft(previousEmail);
+      if (modal.dataset.mode === "edit") {
+        if (previousEmail && previousEmail !== localClientRecord.email) {
+          removeLocalClientByEmail(previousEmail);
+        }
+
+        const previousClientKey = existingClientId || previousEmail || previousName;
+        const nextClientKey = getClientStorageKey(localClientRecord);
+
+        if (previousClientKey && previousClientKey !== nextClientKey) {
+          deleteAdminClientDraft(previousClientKey);
+        }
       }
 
       upsertLocalClient(localClientRecord);
-      saveAdminClientDraft(localClientRecord.email, mergeClientSheetData(buildClientSheetData(localClientRecord), {
+      saveAdminClientDraft(getClientStorageKey(localClientRecord), mergeClientSheetData(buildClientSheetData(localClientRecord), {
         clientName: localClientRecord.name,
         petNames: localClientRecord.pets,
         clientStage: localClientRecord.clientStage,
@@ -1480,6 +1883,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           serviceType: localClientRecord.serviceType || noDataText
         },
         profile: {
+          clientId: localClientRecord.clientId,
           clientName: localClientRecord.name,
           petNames: localClientRecord.pets.join(", "),
           email,
@@ -1499,7 +1903,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       showToast(isEditing ? "Client updated successfully" : "Client saved successfully");
       resetAddClientForm(modal);
       modal.hidden = true;
-      localStorage.setItem(adminClientFilterStorageKey, ["active", "upcoming"].includes(localClientRecord.clientStage) ? "active" : localClientRecord.clientStage);
+      localStorage.setItem(adminClientFilterStorageKey, localClientRecord.clientStage);
       localStorage.setItem("jjcareSelectedClient", localClientRecord.name);
 
       if (saveButton instanceof HTMLButtonElement) {
@@ -1537,26 +1941,68 @@ document.addEventListener("DOMContentLoaded", async () => {
       options: ["active", "upcoming", "completed", "archived", "not responding", "all"]
     });
 
-    const clientOptions = filteredClientRecords.length > 0
-      ? filteredClientRecords.map((client) => client.name)
-      : allClientRecords.map((client) => client.name);
+    const clientOptions = filteredClientRecords.map((client) => client.name);
     const clientField = createField({
       label: "Client",
       name: "adminClientSelector",
-      value: activeClientData.clientName,
+      value: dashboardSelectedClient || "",
       type: "select",
-      options: clientOptions.length > 0 ? clientOptions : [noDataText]
+      options: clientOptions.length > 0 ? clientOptions : [noClientsFoundMessage]
     });
 
     filterField.querySelector(".admin-field-label").textContent = "Filter";
     clientField.querySelector(".admin-field-label").textContent = "Client";
 
-    filterField.querySelector(".admin-control")?.addEventListener("change", (event) => {
-      localStorage.setItem(adminClientFilterStorageKey, event.target.value);
+    const filterControl = filterField.querySelector(".admin-control");
+    const clientControl = clientField.querySelector(".admin-control");
+
+    if (clientControl) {
+      clientControl.disabled = clientOptions.length === 0;
+    }
+
+    console.log("Final dropdown client options:", clientOptions.length > 0 ? clientOptions : [noClientsFoundMessage]);
+    console.log("Final selected client after filter is applied:", dashboardSelectedClient || null);
+
+    filterControl?.addEventListener("change", (event) => {
+      const nextFilter = event.target.value;
+      const nextFilteredClients = filterClientRecords(allClientRecords, nextFilter);
+      const nextSelectedClient = resolveSelectedClientName(nextFilteredClients, dashboardSelectedClient);
+
+      localStorage.setItem(adminClientFilterStorageKey, nextFilter);
+
+      if (nextSelectedClient) {
+        localStorage.setItem("jjcareSelectedClient", nextSelectedClient);
+      } else {
+        localStorage.removeItem("jjcareSelectedClient");
+      }
+
+      if (clientControl) {
+        clientControl.innerHTML = "";
+        const nextOptions = nextFilteredClients.length > 0
+          ? nextFilteredClients.map((client) => client.name)
+          : [getNoClientsFoundMessage(nextFilter)];
+
+        nextOptions.forEach((optionValue) => {
+          const option = document.createElement("option");
+          option.value = optionValue;
+          option.textContent = optionValue;
+          option.selected = optionValue === (nextSelectedClient || getNoClientsFoundMessage(nextFilter));
+          clientControl.appendChild(option);
+        });
+
+        clientControl.disabled = nextFilteredClients.length === 0;
+      }
+
+      console.log("Deduplicated final client list:", allClientRecords);
+      console.log("Normalized stage/status values per client:", allClientRecords.map((client) => getClientNormalizationSnapshot(client)));
+      console.log("Current filter:", nextFilter);
+      console.log("Filtered client names:", nextFilteredClients.map((client) => client.name));
+      console.log("Final dropdown client options:", nextFilteredClients.length > 0 ? nextFilteredClients.map((client) => client.name) : [getNoClientsFoundMessage(nextFilter)]);
+      console.log("Final selected client after filter is applied:", nextSelectedClient || null);
       window.location.reload();
     });
 
-    clientField.querySelector(".admin-control")?.addEventListener("change", (event) => {
+    clientControl?.addEventListener("change", (event) => {
       localStorage.setItem("jjcareSelectedClient", event.target.value);
       window.location.reload();
     });
@@ -1653,14 +2099,22 @@ document.addEventListener("DOMContentLoaded", async () => {
       successMessage = "Saved locally",
       failureMessage = "Failed to update client"
     } = options;
-    const previousPersistedClientKey = activeClientData.profile.email && activeClientData.profile.email !== noDataText
-      ? activeClientData.profile.email
-      : activeClientKey;
+    const previousPersistedClientKey = getClientStorageKey({
+      clientId: activeClientData.clientId || activeClientData.profile.clientId || activeClientRecord?.clientId,
+      email: activeClientData.profile.email && activeClientData.profile.email !== noDataText
+        ? activeClientData.profile.email
+        : activeClientRecord?.email || activeClientKey,
+      name: activeClientData.clientName || activeClientRecord?.name || ""
+    });
     const previousClientName = String(activeClientData.clientName || activeClientRecord?.name || "").trim();
     const nextActiveClientData = mergeClientSheetData(activeClientData, nextPartialData);
-    const persistedClientKey = nextActiveClientData.profile.email && nextActiveClientData.profile.email !== noDataText
-      ? nextActiveClientData.profile.email
-      : activeClientKey;
+    const persistedClientKey = getClientStorageKey({
+      clientId: nextActiveClientData.clientId || nextActiveClientData.profile.clientId || activeClientRecord?.clientId,
+      email: nextActiveClientData.profile.email && nextActiveClientData.profile.email !== noDataText
+        ? nextActiveClientData.profile.email
+        : activeClientRecord?.email || activeClientKey,
+      name: nextActiveClientData.clientName || activeClientRecord?.name || ""
+    });
 
     if (syncToSheets) {
       const clientRecordForSync = buildLocalClientRecordFromData(nextActiveClientData, persistedClientKey, activeClientRecord || {});
@@ -1668,8 +2122,11 @@ document.addEventListener("DOMContentLoaded", async () => {
       try {
         submitClientUpdateFormPost({
           selectedClientName: previousClientName || clientRecordForSync.name,
-          originalEmail: previousPersistedClientKey,
+          originalEmail: activeClientData.profile.email && activeClientData.profile.email !== noDataText
+            ? activeClientData.profile.email
+            : activeClientRecord?.email || "",
           originalName: previousClientName,
+          originalClientId: activeClientData.clientId || activeClientData.profile.clientId || activeClientRecord?.clientId || "",
           payload: buildClientSheetFormPayload(clientRecordForSync)
         });
       } catch (error) {
@@ -1683,7 +2140,13 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     if (previousPersistedClientKey && previousPersistedClientKey !== persistedClientKey) {
       deleteAdminClientDraft(previousPersistedClientKey);
-      removeLocalClientByEmail(previousPersistedClientKey);
+      removeLocalClientByIdentity({
+        clientId: activeClientData.clientId || activeClientData.profile.clientId || activeClientRecord?.clientId || "",
+        email: activeClientData.profile.email && activeClientData.profile.email !== noDataText
+          ? activeClientData.profile.email
+          : activeClientRecord?.email || "",
+        name: previousClientName
+      });
     }
     saveAdminClientDraft(persistedClientKey, activeClientData);
     upsertLocalClient(buildLocalClientRecordFromData(activeClientData, persistedClientKey, activeClientRecord || {}));
@@ -1938,11 +2401,16 @@ document.addEventListener("DOMContentLoaded", async () => {
   };
 
   const renderAdminManagementView = () => {
-    if (!isAdminView || !activeClientRecord) {
+    if (!isAdminView) {
       const existingToolbar = document.querySelector(".admin-toolbar");
       if (existingToolbar) {
         existingToolbar.remove();
       }
+      return;
+    }
+
+    if (!activeClientRecord) {
+      createAdminToolbar(null);
       return;
     }
 
@@ -2007,6 +2475,90 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     const pageCopy = isAdminView ? config.admin : config.client;
+
+    if (isAdminView && !activeClientRecord) {
+      if (currentPage === "dashboard.html") {
+        setText("#dashboard-title", "Dashboard");
+        setText("#dashboard-description", `${noClientsFoundMessage}. Choose a different filter or add a client to continue.`);
+        setText("#dashboard-client-name", noDataText);
+        setText("#dashboard-pet-names", noDataText);
+        setText("#dashboard-hero-label-1", "Portal Status");
+        setText("#dashboard-hero-value-1", noDataText);
+        setText("#dashboard-hero-label-2", "Client Stage");
+        setText("#dashboard-hero-value-2", noDataText);
+        setText("#dashboard-card-1-title", "Client Overview");
+        setText("#dashboard-card-1-badge", noDataText);
+        setText("#dashboard-card-1-text", `${noClientsFoundMessage}.`);
+        setText("#dashboard-card-2-title", "Stay Details");
+        setText("#dashboard-card-2-badge", noDataText);
+        setText("#dashboard-card-2-text", "Client-specific stay details will appear here when a matching client is available.");
+        setText("#dashboard-card-3-title", "Latest Update Summary");
+        setText("#dashboard-card-3-badge", noDataText);
+        setText("#dashboard-card-3-text", "Client-specific updates are unavailable for the current filter.");
+        setText("#dashboard-update-media", "No media available.");
+        setText("#dashboard-update-time", "No timestamp available.");
+        setText("#dashboard-card-4-title", "Quick Care Summary");
+        setText("#dashboard-care-feeding", "No feeding notes available.");
+        setText("#dashboard-care-medication", "No medication notes available.");
+        setText("#dashboard-care-walk", "No walk or potty notes available.");
+        setText("#dashboard-care-behavior", "No behavior notes available.");
+        setText("#dashboard-section-title", "Care Snapshot");
+        setText("#dashboard-section-copy", `${noClientsFoundMessage}.`);
+        setText("#dashboard-card-5-title", "Summary");
+        setText("#dashboard-card-5-text", "Client-specific dashboard details are disabled until a matching client is selected.");
+        Array.from({ length: 6 }).forEach((_, index) => {
+          setText(`#dashboard-checklist-${index + 1}`, "No client selected");
+        });
+      }
+
+      if (currentPage === "updates.html") {
+        setText("#updates-title", "Updates");
+        setText("#updates-description", `${noClientsFoundMessage}. Choose a different filter or add a client to continue.`);
+        setText("#updates-banner-copy", "Client-specific updates are unavailable for the current filter.");
+        setText("#updates-card-1-title", "Latest Update");
+        setText("#updates-card-1-text", `${noClientsFoundMessage}.`);
+        setText("#updates-card-2-title", "Care Notes");
+        setText("#updates-card-2-text", "Client-specific notes will appear here when a matching client is available.");
+        setText("#updates-empty-title", noClientsFoundMessage);
+        setText("#updates-empty-text", "Switch filters or add a client to review updates here.");
+      }
+
+      if (currentPage === "messages.html") {
+        setText("#messages-subtitle", `${noClientsFoundMessage}.`);
+        setText("#messages-banner-copy", "Choose a different filter or add a client to open a conversation.");
+      }
+
+      if (currentPage === "payments.html") {
+        setText("#payments-title", "Payments");
+        setText("#payments-description", `${noClientsFoundMessage}. Choose a different filter or add a client to continue.`);
+        setText("#payments-banner-copy", "Client-specific billing details are unavailable for the current filter.");
+        setText("#payments-card-1-title", "Open Items");
+        setText("#payments-card-1-text", `${noClientsFoundMessage}.`);
+        setText("#payments-card-2-title", "Billing Overview");
+        setText("#payments-card-2-text", "Client-specific billing details will appear here when a matching client is available.");
+        setText("#payments-empty-title", noClientsFoundMessage);
+        setText("#payments-empty-text", "Switch filters or add a client to review payment details here.");
+      }
+
+      if (currentPage === "profile.html") {
+        setText("#profile-title", "Profile");
+        setText("#profile-description", `${noClientsFoundMessage}. Choose a different filter or add a client to continue.`);
+        setText("#profile-banner-copy", "Client-specific profile details are unavailable for the current filter.");
+        setText("#profile-card-1-title", "Client Name");
+        setText("#profile-card-1-text", `${noClientsFoundMessage}.`);
+        setText("#profile-card-2-title", "Pet Names");
+        setText("#profile-card-2-text", "Client-specific pet details will appear here when a matching client is available.");
+        setText("#profile-card-3-title", "Care Notes");
+        setText("#profile-card-3-text", "Client-specific care notes will appear here when a matching client is available.");
+        setText("#profile-card-4-title", "Routine Notes");
+        setText("#profile-card-4-text", "Client-specific routine notes will appear here when a matching client is available.");
+        setText("#profile-card-5-title", "Household Notes");
+        setText("#profile-card-5-text", "Client-specific household notes will appear here when a matching client is available.");
+      }
+
+      renderAdminManagementView();
+      return;
+    }
 
     if (currentPage === "dashboard.html") {
       console.log("dashboard data source:", activeClientData);
@@ -2206,7 +2758,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         ? [activeClientRecord.name]
         : [];
     let selectedClient = isAdminView
-      ? resolveSelectedClientName(portalUsers, localStorage.getItem("jjcareSelectedClient") || defaultAdminClient)
+      ? resolveSelectedClientName(filteredClientRecords, localStorage.getItem("jjcareSelectedClient") || defaultAdminClient)
       : activeClientRecord?.name || "";
     let highlightedMessageId = null;
 
@@ -2335,14 +2887,18 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     if (uploadButton) {
       uploadButton.hidden = !canUploadMedia;
+      uploadButton.classList.toggle("disabled", availableClients.length === 0);
     }
 
     if (chatUpload) {
       chatUpload.hidden = !canUploadMedia;
+      chatUpload.disabled = availableClients.length === 0;
     }
 
     if (fileStatus) {
-      fileStatus.textContent = canUploadMedia ? "No file selected" : "";
+      fileStatus.textContent = canUploadMedia
+        ? (availableClients.length === 0 ? `${noClientsFoundMessage}.` : "No file selected")
+        : "";
     }
 
     if (clientSidebar) {
@@ -2363,15 +2919,22 @@ document.addEventListener("DOMContentLoaded", async () => {
       chatInput.placeholder = isAdminView
         ? "Send an update to the client..."
         : "Reply to JJ Care...";
+      chatInput.disabled = availableClients.length === 0;
+    }
+
+    const chatSubmitButton = chatForm.querySelector('button[type="submit"]');
+
+    if (chatSubmitButton) {
+      chatSubmitButton.disabled = availableClients.length === 0;
     }
 
     const renderMessages = (options = {}) => {
       const { scrollToLatest = false } = options;
 
       if (availableClients.length === 0) {
-        chatThread.innerHTML = "<p class=\"chat-empty-state\">No messages yet</p>";
+        chatThread.innerHTML = `<p class="chat-empty-state">${isAdminView ? `${noClientsFoundMessage}.` : "No messages yet"}</p>`;
         if (chatClientName) {
-          chatClientName.textContent = noDataText;
+          chatClientName.textContent = isAdminView ? noClientsFoundMessage : noDataText;
         }
         renderUnreadBadges();
         return;
