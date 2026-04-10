@@ -3,6 +3,7 @@ const unreadStorageKey = "jjcareUnreadCounts";
 const adminDraftStorageKey = "jjcareAdminClientDrafts";
 const adminClientFilterStorageKey = "jjcareAdminClientFilter";
 const localClientsStorageKey = "jjcareLocalClients";
+const localClientGracePeriodMs = 20 * 60 * 1000;
 const addClientWebhookUrl = "https://script.google.com/macros/s/AKfycbyDCSF-zhdPnSkGnUp69nL9Rt1z4ktKjTWAtF_85F4t7IMZgznLUyBXtNOkMe-M4OoUhw/exec";
 const portalUsersCsvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRK0bSuRbXqHmDC48CQgXQ5vIQlneRJP_bETBwS_mesUrms5M4eZMQff7-hjEqRh6A75Hs-xxwjfqLd/pub?output=csv";
 const protectedPages = [
@@ -257,7 +258,14 @@ const addClientRequiredFieldNames = [
 
 const upsertLocalClient = (clientRecord) => {
   const clients = getLocalClients();
-  const normalizedClient = normalizeLocalClientRecord(clientRecord);
+  const existingClient = clients.find((client) => isSameClientRecord(client, clientRecord));
+  const normalizedClient = normalizeLocalClientRecord({
+    ...(existingClient || {}),
+    ...clientRecord,
+    source: "local",
+    localUpdatedAt: Date.now(),
+    lastSyncedAt: existingClient?.lastSyncedAt || clientRecord?.lastSyncedAt || null
+  });
   const nextClients = clients.filter((client) => !isSameClientRecord(client, normalizedClient));
 
   nextClients.push(normalizedClient);
@@ -776,6 +784,23 @@ const mergeDataSectionPreferComplete = (baseSection = {}, overrideSection = {}) 
   return mergedSection;
 };
 
+const isFreshLocalClientRecord = (clientRecord, selectedClientId = "") => {
+  const normalizedClient = normalizeLocalClientRecord(clientRecord);
+  const localUpdatedAt = Number(normalizedClient.localUpdatedAt || normalizedClient.lastSyncedAt || 0);
+  const clientId = normalizeClientId(normalizedClient.clientId);
+  const selectedId = normalizeClientId(selectedClientId);
+
+  if (selectedId && clientId && clientId === selectedId) {
+    return true;
+  }
+
+  if (!localUpdatedAt) {
+    return false;
+  }
+
+  return Date.now() - localUpdatedAt <= localClientGracePeriodMs;
+};
+
 const findMatchingClientRecord = (clientRecords, candidateRecord) => {
   const normalizedCandidate = normalizeLocalClientRecord(candidateRecord);
   const candidateClientId = normalizeClientId(normalizedCandidate.clientId);
@@ -847,14 +872,21 @@ const dedupeClientRecords = (clientRecords) => {
   return deduplicatedClients;
 };
 
-const cleanupStaleLocalClientData = (portalUsers, localClients) => {
+const cleanupStaleLocalClientData = (portalUsers, localClients, selectedClientId = "") => {
   const sheetClientRecords = dedupeClientRecords(getClientRecords(portalUsers));
   const normalizedLocalClients = localClients.map((client) => normalizeLocalClientRecord(client));
   const validLocalClients = [];
   const staleLocalClients = [];
+  const preservedLocalClients = [];
 
   normalizedLocalClients.forEach((client) => {
     if (findMatchingClientRecord(sheetClientRecords, client)) {
+      validLocalClients.push(client);
+      return;
+    }
+
+    if (isFreshLocalClientRecord(client, selectedClientId)) {
+      preservedLocalClients.push(client);
       validLocalClients.push(client);
       return;
     }
@@ -874,17 +906,18 @@ const cleanupStaleLocalClientData = (portalUsers, localClients) => {
     const draftRecord = normalizeLocalClientRecord({
       clientId: draftValue?.clientId || draftValue?.profile?.clientId || draftKey,
       email: draftValue?.profile?.email || draftKey,
-      name: draftValue?.clientName || draftValue?.profile?.clientName || draftKey
+      name: draftValue?.clientName || draftValue?.profile?.clientName || draftKey,
+      localUpdatedAt: draftValue?.localUpdatedAt || draftValue?.profile?.localUpdatedAt || draftValue?.lastSyncedAt || 0
     });
 
     const matchingSheetClient = findMatchingClientRecord(sheetClientRecords, draftRecord);
 
-    if (!matchingSheetClient) {
+    if (!matchingSheetClient && !isFreshLocalClientRecord(draftRecord, selectedClientId)) {
       staleDraftKeys.push(draftKey);
       return;
     }
 
-    nextDrafts[getClientStorageKey(matchingSheetClient)] = draftValue;
+    nextDrafts[getClientStorageKey(matchingSheetClient || draftRecord)] = draftValue;
   });
 
   if (staleDraftKeys.length > 0 || Object.keys(nextDrafts).length !== Object.keys(existingDrafts).length) {
@@ -894,6 +927,7 @@ const cleanupStaleLocalClientData = (portalUsers, localClients) => {
   return {
     sheetClientRecords,
     validLocalClients,
+    preservedLocalClients,
     staleLocalClients,
     staleDraftKeys
   };
@@ -902,7 +936,7 @@ const cleanupStaleLocalClientData = (portalUsers, localClients) => {
 const mergePortalUsersWithLocalClients = (portalUsers, localClients) => {
   const mergedUsers = { ...portalUsers };
   const sheetClientRecords = dedupeClientRecords(getClientRecords(portalUsers));
-  const staleLocalClients = [];
+  const preservedPendingLocalClients = [];
 
   localClients.forEach((client) => {
     const normalizedClient = normalizeLocalClientRecord(client);
@@ -914,21 +948,35 @@ const mergePortalUsersWithLocalClients = (portalUsers, localClients) => {
     const matchingSheetClient = findMatchingClientRecord(sheetClientRecords, normalizedClient);
 
     if (!matchingSheetClient) {
-      staleLocalClients.push(normalizedClient);
+      const pendingKey = normalizeClientId(normalizedClient.clientId) || normalizedClient.email;
+
+      if (!pendingKey) {
+        return;
+      }
+
+      mergedUsers[pendingKey] = normalizedClient;
+      preservedPendingLocalClients.push(normalizedClient);
       return;
     }
 
     const targetKey = Object.keys(mergedUsers).find((key) => isSameClientRecord(mergedUsers[key], matchingSheetClient));
 
     if (!targetKey) {
-      staleLocalClients.push(normalizedClient);
+      const fallbackKey = normalizeClientId(normalizedClient.clientId) || normalizedClient.email;
+
+      if (!fallbackKey) {
+        return;
+      }
+
+      mergedUsers[fallbackKey] = normalizedClient;
+      preservedPendingLocalClients.push(normalizedClient);
       return;
     }
 
     mergedUsers[targetKey] = mergeClientRecordsPreferComplete(mergedUsers[targetKey], normalizedClient);
   });
 
-  console.log("Stale local clients removed/ignored:", staleLocalClients);
+  console.log("Local clients preserved due to grace period:", preservedPendingLocalClients);
 
   return mergedUsers;
 };
@@ -1511,16 +1559,18 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   try {
     const rawLocalCachedClients = getLocalClients();
+    const rawSelectedAdminClientId = localStorage.getItem("jjcareSelectedClient") || "";
 
     portalUsers = await fetchPortalUsers();
 
-    const cleanupResult = cleanupStaleLocalClientData(portalUsers, rawLocalCachedClients);
+    const cleanupResult = cleanupStaleLocalClientData(portalUsers, rawLocalCachedClients, rawSelectedAdminClientId);
     portalUsers = mergePortalUsersWithLocalClients(portalUsers, cleanupResult.validLocalClients);
     adminClients = dedupeClientRecords(getClientRecords(portalUsers)).map((client) => client.name);
 
     console.log("Raw sheet clients:", cleanupResult.sheetClientRecords);
     console.log("Raw local cached clients:", rawLocalCachedClients);
-    console.log("Stale local clients removed/ignored:", cleanupResult.staleLocalClients);
+    console.log("Local clients preserved due to grace period:", cleanupResult.preservedLocalClients);
+    console.log("Local clients removed as truly stale:", cleanupResult.staleLocalClients);
     console.log("Stale local drafts removed/ignored:", cleanupResult.staleDraftKeys);
   } catch (error) {
     console.error("Portal user list error:", error);
@@ -1552,6 +1602,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   adminClients = filteredClientRecords.map((client) => client.name);
 
   const rawSelectedAdminClientId = localStorage.getItem("jjcareSelectedClient") || "";
+  console.log("Selected clientId before resolution:", rawSelectedAdminClientId || null);
   const dashboardSelectedClientId = isAdminView
     ? resolveSelectedClientId(filteredClientRecords, rawSelectedAdminClientId)
     : normalizeClientId(loggedInClientRecord?.clientId) || getClientPrimaryKey(loggedInClientRecord || {});
@@ -1590,6 +1641,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   console.log("Filtered client names:", adminClients);
   console.log("Final dropdown client options:", adminClients.length > 0 ? adminClients : [noClientsFoundMessage]);
   console.log("Final selected client after filter is applied:", dashboardSelectedClientId || null);
+  console.log("Selected clientId after resolution:", dashboardSelectedClientId || null);
   console.log("Selected client:", activeClientRecord || null);
   console.log("Clients data:", clients);
 
@@ -1600,6 +1652,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     clientId: activeClientData.clientId || activeClientData.profile?.clientId || null,
     name: activeClientData.clientName || null
   });
+  console.log("Client loaded from:", activeClientRecord?.__rawCsvRow ? "sheet_csv" : "local_pending_state");
 
   document.body.classList.toggle("portal-client-mode", !isAdminView);
 
