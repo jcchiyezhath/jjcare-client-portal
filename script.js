@@ -96,6 +96,16 @@ const parsePets = (value) => {
     .filter(Boolean);
 };
 
+const getRowValue = (row, possibleKeys) => {
+  for (const key of possibleKeys) {
+    if (row[key] != null && String(row[key]).trim() !== "") {
+      return row[key];
+    }
+  }
+
+  return "";
+};
+
 const getSequentialClientIdNumber = (value) => {
   const normalizedValue = normalizeClientId(value);
   const match = normalizedValue.match(/^CL-(\d+)$/i);
@@ -641,16 +651,29 @@ const parseCsv = (csvText) => {
 };
 
 const normalizePortalUserRow = (row) => {
-  const clientId = normalizeClientId(row.clientId || row.ClientId || row["Client ID"] || "");
-  const email = String(row.Email || "").trim().toLowerCase();
-  const name = String(row.Name || "").trim();
-  const pets = parsePets(row.Pets || "");
-  const role = String(row.Role || "").trim().toLowerCase();
-  const status = String(row.Status || row.PortalStatus || row["Portal Status"] || "active").trim().toLowerCase();
-  const portalStatus = String(row.PortalStatus || row["Portal Status"] || "").trim();
+  const clientId = normalizeClientId(getRowValue(row, ["clientId", "ClientId", "Client ID"]));
+  const email = String(getRowValue(row, ["Email", "email"])).trim().toLowerCase();
+  const name = String(getRowValue(row, ["Name", "name"])).trim();
+  const pets = parsePets(getRowValue(row, ["Pets", "pets"]));
+  const role = String(getRowValue(row, ["Role", "role"]) || "client").trim().toLowerCase();
+  const status = String(getRowValue(row, ["Status", "status", "PortalStatus", "Portal Status"]) || "active").trim().toLowerCase();
+  const portalStatus = String(getRowValue(row, ["PortalStatus", "Portal Status", "portalStatus"])).trim();
+  const phone = String(getRowValue(row, ["Phone", "phone"])).trim();
+  const area = String(getRowValue(row, ["Area", "area"])).trim();
+  const emergencyContact = String(getRowValue(row, ["EmergencyContact", "Emergency Contact", "emergencyContact"])).trim();
+  const feedingRoutine = String(getRowValue(row, ["FeedingRoutine", "Feeding Routine", "feedingRoutine"])).trim();
+  const medicationSummary = String(getRowValue(row, ["MedicationSummary", "Medication Summary", "medicationSummary"])).trim();
+  const pottyWalkRoutine = String(getRowValue(row, ["PottyOrWalkRoutine", "Potty Or Walk Routine", "Potty or Walk Routine", "pottyOrWalkRoutine"])).trim();
+  const behaviorNotes = String(getRowValue(row, ["BehaviorNotes", "Behavior Notes", "behaviorNotes"])).trim();
+  const householdNotes = String(getRowValue(row, ["HouseholdNotes", "Household Notes", "House Hold Notes", "householdNotes"])).trim();
+  const startDate = String(getRowValue(row, ["StartDate", "Start Date", "startDate"])).trim();
+  const endDate = String(getRowValue(row, ["EndDate", "End Date", "endDate"])).trim();
+  const nightlyRate = String(getRowValue(row, ["NightlyRate", "Nightly Rate", "nightlyRate"])).trim();
+  const totalAmount = String(getRowValue(row, ["TotalAmount", "Total Amount", "totalAmount"])).trim();
+  const serviceType = String(getRowValue(row, ["ServiceType", "Service Type", "serviceType"])).trim();
   const clientStage = resolveClientStage({
     status,
-    clientStage: row.ClientStage || row["Client Stage"] || "",
+    clientStage: getRowValue(row, ["ClientStage", "Client Stage", "clientStage"]),
     portalStatus
   });
 
@@ -663,6 +686,19 @@ const normalizePortalUserRow = (row) => {
     status,
     clientStage,
     portalStatus,
+    phone,
+    area,
+    emergencyContact,
+    feedingRoutine,
+    medicationSummary,
+    pottyWalkRoutine,
+    behaviorNotes,
+    householdNotes,
+    startDate,
+    endDate,
+    nightlyRate,
+    totalAmount,
+    serviceType,
     currentClient: role === "client" ? name : ""
   };
 };
@@ -693,6 +729,51 @@ const normalizeLocalClientRecord = (record) => {
     portalStatus,
     currentClient: role === "client" ? name : ""
   };
+};
+
+const hasMeaningfulValue = (value) => {
+  if (Array.isArray(value)) {
+    return value.length > 0 && value.some((item) => String(item || "").trim() !== "");
+  }
+
+  return String(value || "").trim() !== "" && value !== noDataText;
+};
+
+const mergeClientRecordsPreferComplete = (baseRecord = {}, overrideRecord = {}) => {
+  const normalizedBase = normalizeLocalClientRecord(baseRecord);
+  const normalizedOverride = normalizeLocalClientRecord(overrideRecord);
+  const mergedRecord = { ...normalizedBase };
+
+  Object.keys(normalizedOverride).forEach((key) => {
+    const overrideValue = normalizedOverride[key];
+    const baseValue = normalizedBase[key];
+
+    if (hasMeaningfulValue(overrideValue) || !hasMeaningfulValue(baseValue)) {
+      mergedRecord[key] = overrideValue;
+    }
+  });
+
+  return normalizeLocalClientRecord(mergedRecord);
+};
+
+const mergeDataSectionPreferComplete = (baseSection = {}, overrideSection = {}) => {
+  const mergedSection = { ...baseSection };
+
+  Object.keys(overrideSection || {}).forEach((key) => {
+    const overrideValue = overrideSection[key];
+    const baseValue = baseSection[key];
+
+    if (overrideValue && typeof overrideValue === "object" && !Array.isArray(overrideValue)) {
+      mergedSection[key] = mergeDataSectionPreferComplete(baseValue || {}, overrideValue);
+      return;
+    }
+
+    if (hasMeaningfulValue(overrideValue) || !hasMeaningfulValue(baseValue)) {
+      mergedSection[key] = overrideValue;
+    }
+  });
+
+  return mergedSection;
 };
 
 const findMatchingClientRecord = (clientRecords, candidateRecord) => {
@@ -844,10 +925,7 @@ const mergePortalUsersWithLocalClients = (portalUsers, localClients) => {
       return;
     }
 
-    mergedUsers[targetKey] = {
-      ...mergedUsers[targetKey],
-      ...normalizedClient
-    };
+    mergedUsers[targetKey] = mergeClientRecordsPreferComplete(mergedUsers[targetKey], normalizedClient);
   });
 
   console.log("Stale local clients removed/ignored:", staleLocalClients);
@@ -884,6 +962,7 @@ const fetchPortalUsers = async () => {
       }, {});
 
       const normalizedUser = normalizePortalUserRow(row);
+      normalizedUser.__rawCsvRow = row;
 
       if (normalizedUser.email || normalizedUser.clientId) {
         users[normalizedUser.email || normalizedUser.clientId] = normalizedUser;
@@ -937,16 +1016,37 @@ const getClientRecordByName = (portalUsers, clientName) => {
   ) || null;
 };
 
-const resolveSelectedClientName = (clientSource, selectedClientName) => {
-  const clientList = Array.isArray(clientSource)
-    ? clientSource.map((client) => client?.name).filter(Boolean)
-    : getClientList(clientSource);
+const getClientPrimaryKey = (clientRecord = {}) => {
+  return normalizeClientId(clientRecord.clientId)
+    || String(clientRecord.email || "").trim().toLowerCase()
+    || normalizeClientName(clientRecord.name);
+};
 
-  if (clientList.length === 0) {
+const getClientRecordByStoredKey = (clientRecords, storedKey) => {
+  const normalizedStoredKey = String(storedKey || "").trim();
+
+  if (!normalizedStoredKey) {
+    return null;
+  }
+
+  return clientRecords.find((client) => {
+    const clientId = normalizeClientId(client.clientId);
+    const email = String(client.email || "").trim().toLowerCase();
+    const name = normalizeClientName(client.name);
+
+    return clientId === normalizedStoredKey
+      || email === normalizedStoredKey.toLowerCase()
+      || name === normalizeClientName(normalizedStoredKey);
+  }) || null;
+};
+
+const resolveSelectedClientId = (clientRecords, storedKey) => {
+  if (clientRecords.length === 0) {
     return "";
   }
 
-  return clientList.includes(selectedClientName) ? selectedClientName : clientList[0];
+  const matchedClient = getClientRecordByStoredKey(clientRecords, storedKey);
+  return matchedClient ? normalizeClientId(matchedClient.clientId) || getClientPrimaryKey(matchedClient) : getClientPrimaryKey(clientRecords[0]);
 };
 
 const noDataText = "No data available yet";
@@ -1045,6 +1145,14 @@ const buildClientSheetData = (clientRecord) => {
   const nightlyRate = String(clientRecord?.nightlyRate || "").trim();
   const totalAmount = String(clientRecord?.totalAmount || calculateTotalAmount(startDate, endDate, nightlyRate)).trim();
   const serviceType = String(clientRecord?.serviceType || "").trim() || noDataText;
+  const phone = String(clientRecord?.phone || "").trim() || noDataText;
+  const area = String(clientRecord?.area || "").trim() || noDataText;
+  const emergencyContact = String(clientRecord?.emergencyContact || "").trim() || noDataText;
+  const feedingRoutine = String(clientRecord?.feedingRoutine || "").trim() || noDataText;
+  const medicationSummary = String(clientRecord?.medicationSummary || "").trim() || noDataText;
+  const pottyWalkRoutine = String(clientRecord?.pottyWalkRoutine || "").trim() || noDataText;
+  const behaviorNotes = String(clientRecord?.behaviorNotes || "").trim() || noDataText;
+  const householdNotes = String(clientRecord?.householdNotes || "").trim() || noDataText;
 
   return {
     clientId,
@@ -1085,14 +1193,14 @@ const buildClientSheetData = (clientRecord) => {
       email: clientRecord?.email || noDataText,
       clientName,
       petNames: petNames.join(", "),
-      phone: noDataText,
-      area: noDataText,
-      emergencyContact: noDataText,
-      feedingRoutine: noDataText,
-      medicationSummary: noDataText,
-      pottyWalkRoutine: noDataText,
-      behaviorNotes: noDataText,
-      householdNotes: noDataText,
+      phone,
+      area,
+      emergencyContact,
+      feedingRoutine,
+      medicationSummary,
+      pottyWalkRoutine,
+      behaviorNotes,
+      householdNotes,
       portalStatus,
       clientStage: resolveClientStage(clientRecord)
     },
@@ -1104,32 +1212,21 @@ const mergeClientSheetData = (baseData, overrideData = {}) => {
   const mergedPets = Array.isArray(overrideData.petNames) && overrideData.petNames.length > 0
     ? overrideData.petNames
     : baseData.petNames;
-  const mergedProfile = {
-    ...baseData.profile,
-    ...(overrideData.profile || {})
-  };
+  const mergedLatestUpdate = mergeDataSectionPreferComplete(baseData.latestUpdate, overrideData.latestUpdate || {});
+  const mergedCareNotes = mergeDataSectionPreferComplete(baseData.careNotes, overrideData.careNotes || {});
+  const mergedPaymentDetails = mergeDataSectionPreferComplete(baseData.paymentDetails, overrideData.paymentDetails || {});
+  const mergedStayDetails = mergeDataSectionPreferComplete(baseData.stayDetails, overrideData.stayDetails || {});
+  const mergedProfile = mergeDataSectionPreferComplete(baseData.profile, overrideData.profile || {});
 
   return {
     ...baseData,
-    ...overrideData,
+    ...mergeDataSectionPreferComplete(baseData, overrideData),
     clientId: normalizeClientId(overrideData.clientId || overrideData.profile?.clientId || baseData.clientId || baseData.profile?.clientId),
     petNames: mergedPets,
-    latestUpdate: {
-      ...baseData.latestUpdate,
-      ...(overrideData.latestUpdate || {})
-    },
-    careNotes: {
-      ...baseData.careNotes,
-      ...(overrideData.careNotes || {})
-    },
-    paymentDetails: {
-      ...baseData.paymentDetails,
-      ...(overrideData.paymentDetails || {})
-    },
-    stayDetails: {
-      ...baseData.stayDetails,
-      ...(overrideData.stayDetails || {})
-    },
+    latestUpdate: mergedLatestUpdate,
+    careNotes: mergedCareNotes,
+    paymentDetails: mergedPaymentDetails,
+    stayDetails: mergedStayDetails,
     profile: {
       ...mergedProfile,
       clientId: normalizeClientId(mergedProfile.clientId || overrideData.clientId || baseData.clientId),
@@ -1148,7 +1245,7 @@ const mergeClientSheetData = (baseData, overrideData = {}) => {
 const buildLocalClientRecordFromData = (clientData, clientKey, fallbackRecord = {}) => {
   return normalizeLocalClientRecord({
     clientId: clientData.clientId || clientData.profile.clientId || fallbackRecord.clientId || "",
-    email: clientData.profile.email === noDataText ? clientKey : clientData.profile.email,
+    email: clientData.profile.email === noDataText ? (fallbackRecord.email || "") : clientData.profile.email,
     name: clientData.clientName,
     pets: clientData.petNames,
     role: String(fallbackRecord.role || "client").trim().toLowerCase() || "client",
@@ -1442,7 +1539,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const normalizedEmail = String(storedSession?.email || localStorage.getItem("userEmail") || "")
     .trim()
     .toLowerCase();
-  const loggedInClientRecord = normalizedEmail ? portalUsers[normalizedEmail] || null : null;
+  const loggedInClientRecord = normalizedEmail ? getClientRecordByStoredKey(Object.values(portalUsers), normalizedEmail) : null;
   const isAdminView = portalRole === "admin";
   const adminFilter = isAdminView
     ? String(localStorage.getItem(adminClientFilterStorageKey) || "active").trim().toLowerCase()
@@ -1454,43 +1551,55 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   adminClients = filteredClientRecords.map((client) => client.name);
 
-  const defaultAdminClient = adminClients[0] || "";
-  const rawSelectedAdminClient = localStorage.getItem("jjcareSelectedClient") || "";
-  const dashboardSelectedClient = isAdminView
-    ? resolveSelectedClientName(filteredClientRecords, rawSelectedAdminClient || defaultAdminClient)
-    : loggedInClientRecord?.name || "";
+  const rawSelectedAdminClientId = localStorage.getItem("jjcareSelectedClient") || "";
+  const dashboardSelectedClientId = isAdminView
+    ? resolveSelectedClientId(filteredClientRecords, rawSelectedAdminClientId)
+    : normalizeClientId(loggedInClientRecord?.clientId) || getClientPrimaryKey(loggedInClientRecord || {});
+  const selectedClientRecord = isAdminView
+    ? getClientRecordByStoredKey(allClientRecords, dashboardSelectedClientId)
+    : loggedInClientRecord;
+  const dashboardSelectedClient = selectedClientRecord?.name || "";
 
   if (isAdminView) {
-    if (dashboardSelectedClient && dashboardSelectedClient !== rawSelectedAdminClient) {
-      localStorage.setItem("jjcareSelectedClient", dashboardSelectedClient);
+    if (dashboardSelectedClientId && dashboardSelectedClientId !== rawSelectedAdminClientId) {
+      localStorage.setItem("jjcareSelectedClient", dashboardSelectedClientId);
     }
 
-    if (!dashboardSelectedClient && rawSelectedAdminClient) {
+    if (!dashboardSelectedClientId && rawSelectedAdminClientId) {
       localStorage.removeItem("jjcareSelectedClient");
     }
   }
 
-  const selectedClientRecord = allClientRecords.find((client) => client.name === dashboardSelectedClient) || null;
   const activeClientRecord = isAdminView ? selectedClientRecord : loggedInClientRecord;
   const activeClientKey = getClientStorageKey(activeClientRecord || {});
+  const matchingLocalClientRecord = findMatchingClientRecord(getLocalClients().map((client) => normalizeLocalClientRecord(client)), activeClientRecord || {});
   let activeClientData = mergeClientSheetData(
-    buildClientSheetData(activeClientRecord),
+    buildClientSheetData(mergeClientRecordsPreferComplete(activeClientRecord || {}, matchingLocalClientRecord || {})),
     getAdminClientDraft(activeClientKey) || {}
   );
   const clients = allClientRecords;
 
+  console.log("Selected stored clientId:", rawSelectedAdminClientId || null);
+  console.log("Raw parsed CSV row for selected client:", activeClientRecord?.__rawCsvRow || null);
+  console.log("Normalized sheet client record:", activeClientRecord || null);
+  console.log("Local client record for same clientId:", matchingLocalClientRecord || null);
+  console.log("Chosen merged client record:", activeClientData);
   console.log("Deduplicated final client list:", allClientRecords);
   console.log("Normalized stage/status values per client:", normalizedClientSnapshots);
   console.log("Current filter:", adminFilter);
   console.log("Filtered client names:", adminClients);
   console.log("Final dropdown client options:", adminClients.length > 0 ? adminClients : [noClientsFoundMessage]);
-  console.log("Final selected client after filter is applied:", dashboardSelectedClient || null);
+  console.log("Final selected client after filter is applied:", dashboardSelectedClientId || null);
   console.log("Selected client:", activeClientRecord || null);
   console.log("Clients data:", clients);
 
   console.log("Current page:", currentPage);
-  console.log("Admin selected client:", dashboardSelectedClient);
+  console.log("Admin selected client:", dashboardSelectedClientId);
   console.log("Active client record:", activeClientRecord);
+  console.log("Final active clientId/name used for render:", {
+    clientId: activeClientData.clientId || activeClientData.profile?.clientId || null,
+    name: activeClientData.clientName || null
+  });
 
   document.body.classList.toggle("portal-client-mode", !isAdminView);
 
@@ -1744,7 +1853,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       const isEditing = modal.dataset.mode === "edit";
       const existingClientId = normalizeClientId(activeClientRecord?.clientId || activeClientData?.clientId || activeClientData?.profile?.clientId || "");
       const clientId = isEditing ? (sourceClientId || existingClientId) : generateClientId();
-      const previousEmail = String(activeClientRecord?.email || activeClientKey || "").trim().toLowerCase();
+      const previousEmail = String(activeClientRecord?.email || "").trim().toLowerCase();
       const previousName = String(activeClientData?.clientName || activeClientRecord?.name || "").trim();
       const startDate = modal.querySelector('[name="addClientStartDate"]')?.value || "";
       const endDate = modal.querySelector('[name="addClientEndDate"]')?.value || "";
@@ -1904,7 +2013,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       resetAddClientForm(modal);
       modal.hidden = true;
       localStorage.setItem(adminClientFilterStorageKey, localClientRecord.clientStage);
-      localStorage.setItem("jjcareSelectedClient", localClientRecord.name);
+      localStorage.setItem("jjcareSelectedClient", localClientRecord.clientId || getClientPrimaryKey(localClientRecord));
 
       if (saveButton instanceof HTMLButtonElement) {
         saveButton.disabled = false;
@@ -1941,11 +2050,14 @@ document.addEventListener("DOMContentLoaded", async () => {
       options: ["active", "upcoming", "completed", "archived", "not responding", "all"]
     });
 
-    const clientOptions = filteredClientRecords.map((client) => client.name);
+    const clientOptions = filteredClientRecords.map((client) => ({
+      value: normalizeClientId(client.clientId) || getClientPrimaryKey(client),
+      label: client.name
+    }));
     const clientField = createField({
       label: "Client",
       name: "adminClientSelector",
-      value: dashboardSelectedClient || "",
+      value: dashboardSelectedClientId || "",
       type: "select",
       options: clientOptions.length > 0 ? clientOptions : [noClientsFoundMessage]
     });
@@ -1961,17 +2073,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     console.log("Final dropdown client options:", clientOptions.length > 0 ? clientOptions : [noClientsFoundMessage]);
-    console.log("Final selected client after filter is applied:", dashboardSelectedClient || null);
+    console.log("Final selected client after filter is applied:", dashboardSelectedClientId || null);
 
     filterControl?.addEventListener("change", (event) => {
       const nextFilter = event.target.value;
       const nextFilteredClients = filterClientRecords(allClientRecords, nextFilter);
-      const nextSelectedClient = resolveSelectedClientName(nextFilteredClients, dashboardSelectedClient);
+      const nextSelectedClientId = resolveSelectedClientId(nextFilteredClients, dashboardSelectedClientId);
 
       localStorage.setItem(adminClientFilterStorageKey, nextFilter);
 
-      if (nextSelectedClient) {
-        localStorage.setItem("jjcareSelectedClient", nextSelectedClient);
+      if (nextSelectedClientId) {
+        localStorage.setItem("jjcareSelectedClient", nextSelectedClientId);
       } else {
         localStorage.removeItem("jjcareSelectedClient");
       }
@@ -1979,14 +2091,20 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (clientControl) {
         clientControl.innerHTML = "";
         const nextOptions = nextFilteredClients.length > 0
-          ? nextFilteredClients.map((client) => client.name)
+          ? nextFilteredClients.map((client) => ({
+            value: normalizeClientId(client.clientId) || getClientPrimaryKey(client),
+            label: client.name
+          }))
           : [getNoClientsFoundMessage(nextFilter)];
 
         nextOptions.forEach((optionValue) => {
+          const resolvedOption = typeof optionValue === "string"
+            ? { value: optionValue, label: optionValue }
+            : optionValue;
           const option = document.createElement("option");
-          option.value = optionValue;
-          option.textContent = optionValue;
-          option.selected = optionValue === (nextSelectedClient || getNoClientsFoundMessage(nextFilter));
+          option.value = resolvedOption.value;
+          option.textContent = resolvedOption.label;
+          option.selected = resolvedOption.value === (nextSelectedClientId || getNoClientsFoundMessage(nextFilter));
           clientControl.appendChild(option);
         });
 
@@ -1998,7 +2116,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       console.log("Current filter:", nextFilter);
       console.log("Filtered client names:", nextFilteredClients.map((client) => client.name));
       console.log("Final dropdown client options:", nextFilteredClients.length > 0 ? nextFilteredClients.map((client) => client.name) : [getNoClientsFoundMessage(nextFilter)]);
-      console.log("Final selected client after filter is applied:", nextSelectedClient || null);
+      console.log("Final selected client after filter is applied:", nextSelectedClientId || null);
       window.location.reload();
     });
 
@@ -2060,10 +2178,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (type === "select") {
       control = document.createElement("select");
       options.forEach((optionValue) => {
+        const resolvedOption = typeof optionValue === "string"
+          ? { value: optionValue, label: optionValue }
+          : optionValue;
         const option = document.createElement("option");
-        option.value = optionValue;
-        option.textContent = optionValue;
-        option.selected = optionValue === value;
+        option.value = resolvedOption.value;
+        option.textContent = resolvedOption.label;
+        option.selected = resolvedOption.value === value;
         control.appendChild(option);
       });
     } else if (multiline) {
@@ -2150,8 +2271,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     saveAdminClientDraft(persistedClientKey, activeClientData);
     upsertLocalClient(buildLocalClientRecordFromData(activeClientData, persistedClientKey, activeClientRecord || {}));
-    if (activeClientData.clientName && activeClientData.clientName !== noDataText) {
-      localStorage.setItem("jjcareSelectedClient", activeClientData.clientName);
+    if (activeClientData.clientId || activeClientData.clientName !== noDataText) {
+      localStorage.setItem("jjcareSelectedClient", activeClientData.clientId || persistedClientKey);
     }
     showToast(successMessage);
     window.setTimeout(() => {
@@ -2292,7 +2413,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const cards = Array.from(document.querySelectorAll(".portal-grid .info-card"));
 
     createAdminToolbar(() => {
-      const email = document.querySelector('[name="profileEmail"]')?.value.trim().toLowerCase() || activeClientKey;
+      const email = document.querySelector('[name="profileEmail"]')?.value.trim().toLowerCase() || activeClientRecord?.email || "";
       const clientName = document.querySelector('[name="profileClientName"]')?.value.trim() || noDataText;
       const petNamesText = document.querySelector('[name="profilePetNames"]')?.value.trim() || noDataText;
       const portalStatus = document.querySelector('[name="profilePortalStatus"]')?.value.trim() || noDataText;
@@ -2334,7 +2455,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       const title = document.createElement("h3");
       title.textContent = "Client Details";
       const grid = buildAdminFormGrid([
-        { label: "Email", name: "profileEmail", value: activeClientData.profile.email === noDataText ? activeClientKey : activeClientData.profile.email, type: "email" },
+        { label: "Email", name: "profileEmail", value: activeClientData.profile.email === noDataText ? (activeClientRecord?.email || "") : activeClientData.profile.email, type: "email" },
         { label: "Client name", name: "profileClientName", value: activeClientData.profile.clientName || activeClientData.clientName },
         { label: "Pet names", name: "profilePetNames", value: activeClientData.profile.petNames || activeClientData.petNames.join(", ") }
       ]);
@@ -2562,6 +2683,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     if (currentPage === "dashboard.html") {
       console.log("dashboard data source:", activeClientData);
+      console.log("Stay details being rendered:", activeClientData.stayDetails);
       const stayDuration = getNightCount(activeClientData.stayDetails.startDate, activeClientData.stayDetails.endDate);
       const formattedNightlyRate = formatCurrencyDisplay(activeClientData.stayDetails.nightlyRate, { decimals: 0 });
       const formattedTotalAmount = formatCurrencyDisplay(
@@ -2639,6 +2761,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         paymentDetails: activeClientData.paymentDetails,
         stayDetails: activeClientData.stayDetails
       });
+      console.log("Stay details being rendered:", activeClientData.stayDetails);
       const formattedPaymentAmount = formatCurrencyDisplay(
         activeClientData.paymentDetails.amount || activeClientData.stayDetails.totalAmount,
         { decimals: 2 }
@@ -2753,13 +2876,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     const chatContext = document.querySelector("#chat-context");
 
     const availableClients = isAdminView
-      ? adminClients
+      ? filteredClientRecords.map((client) => ({
+        id: normalizeClientId(client.clientId) || getClientPrimaryKey(client),
+        name: client.name
+      }))
       : activeClientRecord?.name
-        ? [activeClientRecord.name]
+        ? [{ id: normalizeClientId(activeClientRecord.clientId) || getClientPrimaryKey(activeClientRecord), name: activeClientRecord.name }]
         : [];
     let selectedClient = isAdminView
-      ? resolveSelectedClientName(filteredClientRecords, localStorage.getItem("jjcareSelectedClient") || defaultAdminClient)
-      : activeClientRecord?.name || "";
+      ? resolveSelectedClientId(filteredClientRecords, localStorage.getItem("jjcareSelectedClient") || dashboardSelectedClientId || "")
+      : normalizeClientId(activeClientRecord?.clientId) || getClientPrimaryKey(activeClientRecord || {});
     let highlightedMessageId = null;
 
     const canUploadMedia = isAdminView;
@@ -2768,7 +2894,11 @@ document.addEventListener("DOMContentLoaded", async () => {
       : { sender: "client", label: "Client" };
     const incomingSender = isAdminView ? "client" : "jjcare";
 
-    const getStorageKey = (clientName) => `messages_${clientName}`;
+    const getClientNameById = (clientId) => {
+      return availableClients.find((client) => client.id === clientId)?.name || "";
+    };
+
+    const getStorageKey = (clientId) => `messages_${clientId}`;
 
     const buildClientButtons = () => {
       if (!clientSidebar) {
@@ -2781,7 +2911,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         return [];
       }
 
-      if (adminClients.length === 0) {
+      if (availableClients.length === 0) {
         const emptyState = document.createElement("p");
         emptyState.className = "chat-empty-state";
         emptyState.textContent = noDataText;
@@ -2789,18 +2919,18 @@ document.addEventListener("DOMContentLoaded", async () => {
         return [];
       }
 
-      return adminClients.map((clientName) => {
+      return availableClients.map((client) => {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "client-item";
-        button.dataset.client = clientName;
+        button.dataset.client = client.id;
 
         const nameSpan = document.createElement("span");
-        nameSpan.textContent = clientName;
+        nameSpan.textContent = client.name;
 
         const badge = document.createElement("span");
         badge.className = "unread-badge";
-        badge.dataset.unreadFor = clientName;
+        badge.dataset.unreadFor = client.id;
         badge.hidden = true;
         badge.textContent = "0";
 
@@ -2820,8 +2950,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
     };
 
-    const getMessages = (clientName) => {
-      const storageKey = getStorageKey(clientName);
+    const getMessages = (clientId) => {
+      const storageKey = getStorageKey(clientId);
       const savedMessages = readJsonStorage(storageKey, null);
 
       if (Array.isArray(savedMessages)) {
@@ -2832,31 +2962,31 @@ document.addEventListener("DOMContentLoaded", async () => {
       return [];
     };
 
-    const setUnreadCount = (clientName, count) => {
+    const setUnreadCount = (clientId, count) => {
       const unreadCounts = getUnreadCounts();
-      unreadCounts[clientName] = count;
+      unreadCounts[clientId] = count;
       setUnreadCounts(unreadCounts);
     };
 
-    const clearUnreadCount = (clientName) => {
-      setUnreadCount(clientName, 0);
+    const clearUnreadCount = (clientId) => {
+      setUnreadCount(clientId, 0);
     };
 
-    const incrementUnreadCount = (clientName) => {
+    const incrementUnreadCount = (clientId) => {
       const unreadCounts = getUnreadCounts();
-      unreadCounts[clientName] = Number(unreadCounts[clientName] || 0) + 1;
+      unreadCounts[clientId] = Number(unreadCounts[clientId] || 0) + 1;
       setUnreadCounts(unreadCounts);
     };
 
     const syncUnreadFromMessages = () => {
       const unreadCounts = getUnreadCounts();
 
-      availableClients.forEach((clientName) => {
-        const messages = getMessages(clientName);
+      availableClients.forEach((client) => {
+        const messages = getMessages(client.id);
         const incomingCount = messages.filter((message) => message.sender === incomingSender).length;
 
-        if (typeof unreadCounts[clientName] !== "number") {
-          unreadCounts[clientName] = clientName === selectedClient ? 0 : incomingCount;
+        if (typeof unreadCounts[client.id] !== "number") {
+          unreadCounts[client.id] = client.id === selectedClient ? 0 : incomingCount;
         }
       });
 
@@ -2869,8 +2999,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       clientButtons.forEach((button) => {
         const badge = button.querySelector(".unread-badge");
-        const clientName = button.dataset.client;
-        const unreadCount = Number(unreadCounts[clientName] || 0);
+        const clientId = button.dataset.client;
+        const unreadCount = Number(unreadCounts[clientId] || 0);
 
         if (badge) {
           badge.textContent = unreadCount;
@@ -2944,7 +3074,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       chatThread.innerHTML = "";
 
       if (chatClientName) {
-        chatClientName.textContent = selectedClient;
+        chatClientName.textContent = getClientNameById(selectedClient);
       }
 
       messages.forEach((message) => {
@@ -3003,8 +3133,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       highlightedMessageId = null;
     };
 
-    if (!availableClients.includes(selectedClient)) {
-      selectedClient = availableClients[0] || "";
+    if (!availableClients.some((client) => client.id === selectedClient)) {
+      selectedClient = availableClients[0]?.id || "";
       if (isAdminView) {
         localStorage.setItem("jjcareSelectedClient", selectedClient);
       }
